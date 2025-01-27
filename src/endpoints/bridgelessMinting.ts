@@ -1,10 +1,23 @@
 import { Access, z } from "../lib/access/index.js";
 import { Source } from "../lib/source/Source.js";
+import { Interface, Log } from "ethers";
 
 const MOCK_ADDRESSES = {
   "6283": "0xfffffffffffffffffffffffe0000000000000119", // LAOS Mainnet address for GoalRev collection
   "137": "0x9f16fc5a49afa724407225e97edb8775fe4eb9fb", // Polygon GoalRev production address
 };
+
+// ABI definitions
+const polygonABI = [
+  "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",  // Added 'indexed' to match the event signature
+];
+
+const laosABI = [
+  "event MintedWithExternalURI(address indexed _to, uint96 _slot, uint256 _tokenId, string _tokenURI)",
+];
+
+const polygonInterface = new Interface(polygonABI);
+const laosInterface = new Interface(laosABI);
 
 export const registerBridgelessMintingEndpoint = (access: Access) => {
   access.registerEndpoint({
@@ -74,11 +87,66 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
       // Await both results
       const [laosResults, polygonResults] = await Promise.all([laosMintEvents, polygonTransferEvents]);
 
-      // Return results separately for each chain
+      // Decode LAOS events
+      const decodedLaosEvents = (laosResults.data as Log[]).map((log) => {
+        try {
+          const decoded = laosInterface.parseLog({
+            topics: log.topics,
+            data: log.data,
+          });
+
+          return {
+            ...log,
+            content: {
+              event: decoded.name,
+              args: {
+                to: decoded.args._to,
+                slot: decoded.args._slot.toString(),
+                tokenId: decoded.args._tokenId.toString(),
+                tokenURI: decoded.args._tokenURI,
+              },
+            },
+          };
+        } catch (error) {
+          console.error("Failed to decode LAOS log:", error);
+          return log;
+        }
+      });
+
+      // Decode Polygon events
+      const decodedPolygonEvents = (polygonResults.data as Log[]).map((log) => {
+        try {
+          // For Transfer events, all parameters are indexed, so we can extract them directly from topics
+          // topics[0] is the event signature
+          // topics[1] is the from address
+          // topics[2] is the to address
+          // topics[3] is the tokenId
+          const from = `0x${log.topics[1].slice(-40)}`;  // Remove '0x' and take last 40 chars
+          const to = `0x${log.topics[2].slice(-40)}`;
+          const tokenId = BigInt(log.topics[3]).toString();
+
+          return {
+            ...log,
+            content: {
+              event: "Transfer",
+              args: {
+                from,
+                to,
+                tokenId,
+              },
+            },
+          };
+        } catch (error) {
+          console.error("Failed to decode Polygon log:", error);
+          return log;
+        }
+      });
+
+      // Return both raw data and decoded content
       return {
         data: {
-          laos: laosResults.data, // Mint events on LAOS
-          polygon: polygonResults.data, // Transfer events on Polygon
+          laos: decodedLaosEvents,
+          polygon: decodedPolygonEvents,
         },
       };
     },
