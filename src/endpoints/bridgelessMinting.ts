@@ -9,7 +9,7 @@ const MOCK_ADDRESSES = {
 
 // ABI definitions
 const polygonABI = [
-  "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",  // Added 'indexed' to match the event signature
+  "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
 ];
 
 const laosABI = [
@@ -18,6 +18,16 @@ const laosABI = [
 
 const polygonInterface = new Interface(polygonABI);
 const laosInterface = new Interface(laosABI);
+
+interface DecodedEvent {
+  chainId: string;
+  blockNumber: string;
+  blockTimestamp: number;
+  transactionHash: string;
+  event: string;
+  tokenId: string;
+  [key: string]: any;
+}
 
 export const registerBridgelessMintingEndpoint = (access: Access) => {
   access.registerEndpoint({
@@ -39,7 +49,7 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
       const laosMintEvents = source.events.get("6283", {
         filters: {
           address: MOCK_ADDRESSES["6283"],
-          topic_0: "0xa7135052b348b0b4e9943bae82d8ef1c5ac225e594ef4271d12f0744cfc98348", // Minting topic
+          topic_0: "0xa7135052b348b0b4e9943bae82d8ef1c5ac225e594ef4271d12f0744cfc98348",
           block_timestamp: [
             {
               operator: "gte",
@@ -63,7 +73,7 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
       const polygonTransferEvents = source.events.get("137", {
         filters: {
           address: MOCK_ADDRESSES["137"],
-          topic_0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", // Transfer topic
+          topic_0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
           block_timestamp: [
             {
               operator: "gte",
@@ -96,58 +106,65 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
           });
 
           return {
-            ...log,
-            content: {
-              event: decoded.name,
-              args: {
-                to: decoded.args._to,
-                slot: decoded.args._slot.toString(),
-                tokenId: decoded.args._tokenId.toString(),
-                tokenURI: decoded.args._tokenURI,
-              },
-            },
-          };
+            chainId: "6283",
+            blockNumber: log.block_number,
+            blockTimestamp: log.block_timestamp,
+            transactionHash: log.transaction_hash,
+            event: decoded.name,
+            tokenId: decoded.args._tokenId.toString(),
+            to: decoded.args._to,
+            slot: decoded.args._slot.toString(),
+            tokenURI: decoded.args._tokenURI,
+          } as DecodedEvent;
         } catch (error) {
           console.error("Failed to decode LAOS log:", error);
-          return log;
+          return null;
         }
-      });
+      }).filter(Boolean);
 
       // Decode Polygon events
       const decodedPolygonEvents = (polygonResults.data as Log[]).map((log) => {
         try {
-          // For Transfer events, all parameters are indexed, so we can extract them directly from topics
-          // topics[0] is the event signature
-          // topics[1] is the from address
-          // topics[2] is the to address
-          // topics[3] is the tokenId
-          const from = `0x${log.topics[1].slice(-40)}`;  // Remove '0x' and take last 40 chars
+          const from = `0x${log.topics[1].slice(-40)}`;
           const to = `0x${log.topics[2].slice(-40)}`;
           const tokenId = BigInt(log.topics[3]).toString();
 
           return {
-            ...log,
-            content: {
-              event: "Transfer",
-              args: {
-                from,
-                to,
-                tokenId,
-              },
-            },
-          };
+            chainId: "137",
+            blockNumber: log.block_number,
+            blockTimestamp: log.block_timestamp,
+            transactionHash: log.transaction_hash,
+            event: "Transfer",
+            tokenId,
+            from,
+            to,
+          } as DecodedEvent;
         } catch (error) {
           console.error("Failed to decode Polygon log:", error);
-          return log;
+          return null;
         }
+      }).filter(Boolean);
+
+      // Combine all events and group by tokenId
+      const allEvents = [...decodedLaosEvents, ...decodedPolygonEvents];
+      const groupedByTokenId: { [tokenId: string]: DecodedEvent[] } = {};
+
+      allEvents.forEach((event) => {
+        if (!groupedByTokenId[event.tokenId]) {
+          groupedByTokenId[event.tokenId] = [];
+        }
+        groupedByTokenId[event.tokenId].push(event);
       });
 
-      // Return both raw data and decoded content
+      // Sort events within each tokenId by timestamp
+      Object.values(groupedByTokenId).forEach(events => {
+        events.sort((a, b) => b.blockTimestamp - a.blockTimestamp);
+      });
+
       return {
         data: {
-          laos: decodedLaosEvents,
-          polygon: decodedPolygonEvents,
-        },
+          byTokenId: groupedByTokenId
+        }
       };
     },
   });
