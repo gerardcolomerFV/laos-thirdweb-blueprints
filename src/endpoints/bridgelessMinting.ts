@@ -35,12 +35,12 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
       query: z.object({
         startDate: z.string().datetime().optional(),
         endDate: z.string().datetime().optional(),
-        limitPerChain: z.number().optional().default(10000),
+        limitPerChain: z.number().optional().default(30000),
       }),
     },
     handler: async ({ query }) => {
       const source = new Source();
-      const defaultStartDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 Days ago
+      const defaultStartDate = new Date(Date.now() - 130 * 24 * 60 * 60 * 1000).toISOString(); // 130 Days ago
       const defaultEndDate = new Date().toISOString();
 
       console.log("Fetching events from Thirdweb...");
@@ -51,6 +51,29 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
       });
 
       try {
+        let latestBlockWithEvent = { "6283": 0, "137": 0 }; // Track latest blocks where an event occurred
+
+        // Fetch latest indexed block by querying the latest event
+        async function getLatestIndexedBlock(chainId: string) {
+          const latestEvent = await source.events.get(chainId, {
+            orderBy: { field: ["block_number"], direction: "desc" },
+            pagination: { limit: 1 },
+          });
+
+          if (latestEvent?.data?.length) {
+            return latestEvent.data[0].block_number;
+          }
+          return 0;
+        }
+
+        const latestBlockIndexed = {
+          "6283": await getLatestIndexedBlock("6283"),
+          "137": await getLatestIndexedBlock("137"),
+        };
+
+        console.log(`Latest indexed block on LAOS: ${latestBlockIndexed["6283"]}`);
+        console.log(`Latest indexed block on Polygon: ${latestBlockIndexed["137"]}`);
+
         const laosMintEvents = await source.events.get("6283", {
           filters: {
             address: CONTRACT_ADDRESSES["6283"],
@@ -81,6 +104,17 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
 
         if (!laosResults?.data?.length) console.warn("No LAOS mint events returned.");
         if (!polygonResults?.data?.length) console.warn("No Polygon transfer events returned.");
+
+        // Track the highest block number with an event
+        if (laosResults?.data?.length) {
+          latestBlockWithEvent["6283"] = Math.max(...laosResults.data.map((log) => log.block_number));
+        }
+        if (polygonResults?.data?.length) {
+          latestBlockWithEvent["137"] = Math.max(...polygonResults.data.map((log) => log.block_number));
+        }
+
+        console.log(`Latest block with event on LAOS: ${latestBlockWithEvent["6283"]}`);
+        console.log(`Latest block with event on Polygon: ${latestBlockWithEvent["137"]}`);
 
         // Process LAOS Mint Events (to get the tokenURI)
         const tokenData: { [tokenId: string]: TokenEntry } = {};
