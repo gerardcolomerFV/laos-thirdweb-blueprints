@@ -41,7 +41,9 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
     },
     handler: async ({ query }) => {
       const source = new Source();
-      const defaultStartDate = new Date(Date.now() - 130 * 24 * 60 * 60 * 1000).toISOString(); // 130 Days ago
+      const defaultStartDate = new Date(
+        Date.now() - 130 * 24 * 60 * 60 * 1000,
+      ).toISOString(); // 130 Days ago
       const defaultEndDate = new Date().toISOString();
 
       console.log("Fetching events from Thirdweb...");
@@ -55,10 +57,21 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
         const laosMintEvents = await source.events.get("6283", {
           filters: {
             address: CONTRACT_ADDRESSES["6283"],
-            topic_0: "0xa7135052b348b0b4e9943bae82d8ef1c5ac225e594ef4271d12f0744cfc98348",
+            topic_0:
+              "0xa7135052b348b0b4e9943bae82d8ef1c5ac225e594ef4271d12f0744cfc98348",
             block_timestamp: [
-              { operator: "gte", value: Math.floor(new Date(query.startDate || defaultStartDate).getTime() / 1000) },
-              { operator: "lte", value: Math.floor(new Date(query.endDate || defaultEndDate).getTime() / 1000) },
+              {
+                operator: "gte",
+                value: Math.floor(
+                  new Date(query.startDate || defaultStartDate).getTime() / 1000,
+                ),
+              },
+              {
+                operator: "lte",
+                value: Math.floor(
+                  new Date(query.endDate || defaultEndDate).getTime() / 1000,
+                ),
+              },
             ],
           },
           orderBy: { field: ["block_timestamp"], direction: "desc" },
@@ -68,20 +81,38 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
         const polygonTransferEvents = await source.events.get("137", {
           filters: {
             address: CONTRACT_ADDRESSES["137"],
-            topic_0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            topic_0:
+              "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
             block_timestamp: [
-              { operator: "gte", value: Math.floor(new Date(query.startDate || defaultStartDate).getTime() / 1000) },
-              { operator: "lte", value: Math.floor(new Date(query.endDate || defaultEndDate).getTime() / 1000) },
+              {
+                operator: "gte",
+                value: Math.floor(
+                  new Date(query.startDate || defaultStartDate).getTime() / 1000,
+                ),
+              },
+              {
+                operator: "lte",
+                value: Math.floor(
+                  new Date(query.endDate || defaultEndDate).getTime() / 1000,
+                ),
+              },
             ],
           },
           orderBy: { field: ["block_timestamp"], direction: "desc" },
           pagination: { limit: query.limitPerChain },
         });
 
-        const [laosResults, polygonResults] = await Promise.all([laosMintEvents, polygonTransferEvents]);
+        const [laosResults, polygonResults] = await Promise.all([
+          laosMintEvents,
+          polygonTransferEvents,
+        ]);
 
-        if (!laosResults?.data?.length) console.warn("No LAOS mint events returned.");
-        if (!polygonResults?.data?.length) console.warn("No Polygon transfer events returned.");
+        if (!laosResults?.data?.length) {
+          console.warn("No LAOS mint events returned.");
+        }
+        if (!polygonResults?.data?.length) {
+          console.warn("No Polygon transfer events returned.");
+        }
 
         // Process LAOS Mint Events (to get the tokenURI)
         const tokenData: { [tokenId: string]: TokenEntry } = {};
@@ -132,10 +163,14 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
           }
         }
 
-        // Filter out tokens without a tokenURI
-        const filteredTokenEntries = Object.values(tokenData).filter((token) => token.tokenURI !== "");
+        // **Filter out tokens without a tokenURI**
+        const filteredTokenEntries = Object.values(tokenData).filter(
+          (token) => token.tokenURI !== "",
+        );
 
-        console.log(`Final token entries count (after filtering): ${filteredTokenEntries.length}`);
+        console.log(
+          `Final token entries count (after filtering): ${filteredTokenEntries.length}`,
+        );
 
         return {
           data: {
