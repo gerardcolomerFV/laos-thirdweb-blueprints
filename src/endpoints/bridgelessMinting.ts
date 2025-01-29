@@ -1,8 +1,9 @@
-import { Access, z } from "../lib/access/index.js";
-import { Source } from "../lib/source/Source.js";
 import { Interface, Log } from "ethers";
+import type { Access } from "../lib/access/index.js";
+import { z } from "../lib/access/index.js";
+import { Source } from "../lib/source/Source.js";
 
-const MOCK_ADDRESSES = {
+const CONTRACT_ADDRESSES = {
   "6283": "0xfffffffffffffffffffffffe0000000000000119", // LAOS Mainnet address for GoalRev collection
   "137": "0x9f16fc5a49afa724407225e97edb8775fe4eb9fb", // Polygon GoalRev production address
 };
@@ -19,14 +20,12 @@ const laosABI = [
 const polygonInterface = new Interface(polygonABI);
 const laosInterface = new Interface(laosABI);
 
-interface DecodedEvent {
+interface TokenEntry {
   chainId: string;
-  blockNumber: string;
-  blockTimestamp: number;
-  transactionHash: string;
-  event: string;
+  collectionContract: string;
   tokenId: string;
-  [key: string]: any;
+  owner: string;
+  tokenURI: string;
 }
 
 export const registerBridgelessMintingEndpoint = (access: Access) => {
@@ -37,135 +36,152 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
       query: z.object({
         startDate: z.string().datetime().optional(),
         endDate: z.string().datetime().optional(),
-        limitPerChain: z.number().optional().default(100),
+        limitPerChain: z.number().optional().default(30000),
       }),
     },
     handler: async ({ query }) => {
       const source = new Source();
-      const defaultStartDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const defaultStartDate = new Date(
+        Date.now() - 130 * 24 * 60 * 60 * 1000,
+      ).toISOString(); // 130 Days ago
       const defaultEndDate = new Date().toISOString();
 
-      // Create separate promises for each chain
-      const laosMintEvents = source.events.get("6283", {
-        filters: {
-          address: MOCK_ADDRESSES["6283"],
-          topic_0: "0xa7135052b348b0b4e9943bae82d8ef1c5ac225e594ef4271d12f0744cfc98348",
-          block_timestamp: [
-            {
-              operator: "gte",
-              value: Math.floor(new Date(query.startDate || defaultStartDate).getTime() / 1000),
-            },
-            {
-              operator: "lte",
-              value: Math.floor(new Date(query.endDate || defaultEndDate).getTime() / 1000),
-            },
-          ],
-        },
-        orderBy: {
-          field: ["block_timestamp"],
-          direction: "desc",
-        },
-        pagination: {
-          limit: query.limitPerChain,
-        },
+      console.log("Fetching events from Thirdweb...");
+      console.log("Query Parameters:", {
+        startDate: query.startDate || defaultStartDate,
+        endDate: query.endDate || defaultEndDate,
+        limitPerChain: query.limitPerChain,
       });
 
-      const polygonTransferEvents = source.events.get("137", {
-        filters: {
-          address: MOCK_ADDRESSES["137"],
-          topic_0: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-          block_timestamp: [
-            {
-              operator: "gte",
-              value: Math.floor(new Date(query.startDate || defaultStartDate).getTime() / 1000),
-            },
-            {
-              operator: "lte",
-              value: Math.floor(new Date(query.endDate || defaultEndDate).getTime() / 1000),
-            },
-          ],
-        },
-        orderBy: {
-          field: ["block_timestamp"],
-          direction: "desc",
-        },
-        pagination: {
-          limit: query.limitPerChain,
-        },
-      });
+      try {
+        const laosMintEvents = await source.events.get("6283", {
+          filters: {
+            address: CONTRACT_ADDRESSES["6283"],
+            topic_0:
+              "0xa7135052b348b0b4e9943bae82d8ef1c5ac225e594ef4271d12f0744cfc98348",
+            block_timestamp: [
+              {
+                operator: "gte",
+                value: Math.floor(
+                  new Date(query.startDate || defaultStartDate).getTime() / 1000,
+                ),
+              },
+              {
+                operator: "lte",
+                value: Math.floor(
+                  new Date(query.endDate || defaultEndDate).getTime() / 1000,
+                ),
+              },
+            ],
+          },
+          orderBy: { field: ["block_timestamp"], direction: "desc" },
+          pagination: { limit: query.limitPerChain },
+        });
 
-      // Await both results
-      const [laosResults, polygonResults] = await Promise.all([laosMintEvents, polygonTransferEvents]);
+        const polygonTransferEvents = await source.events.get("137", {
+          filters: {
+            address: CONTRACT_ADDRESSES["137"],
+            topic_0:
+              "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            block_timestamp: [
+              {
+                operator: "gte",
+                value: Math.floor(
+                  new Date(query.startDate || defaultStartDate).getTime() / 1000,
+                ),
+              },
+              {
+                operator: "lte",
+                value: Math.floor(
+                  new Date(query.endDate || defaultEndDate).getTime() / 1000,
+                ),
+              },
+            ],
+          },
+          orderBy: { field: ["block_timestamp"], direction: "desc" },
+          pagination: { limit: query.limitPerChain },
+        });
 
-      // Decode LAOS events
-      const decodedLaosEvents = (laosResults.data as Log[]).map((log) => {
-        try {
-          const decoded = laosInterface.parseLog({
-            topics: log.topics,
-            data: log.data,
-          });
+        const [laosResults, polygonResults] = await Promise.all([
+          laosMintEvents,
+          polygonTransferEvents,
+        ]);
 
-          return {
-            chainId: "6283",
-            blockNumber: log.block_number,
-            blockTimestamp: log.block_timestamp,
-            transactionHash: log.transaction_hash,
-            event: decoded.name,
-            tokenId: decoded.args._tokenId.toString(),
-            to: decoded.args._to,
-            slot: decoded.args._slot.toString(),
-            tokenURI: decoded.args._tokenURI,
-          } as DecodedEvent;
-        } catch (error) {
-          console.error("Failed to decode LAOS log:", error);
-          return null;
+        if (!laosResults?.data?.length) {
+          console.warn("No LAOS mint events returned.");
         }
-      }).filter(Boolean);
-
-      // Decode Polygon events
-      const decodedPolygonEvents = (polygonResults.data as Log[]).map((log) => {
-        try {
-          const from = `0x${log.topics[1].slice(-40)}`;
-          const to = `0x${log.topics[2].slice(-40)}`;
-          const tokenId = BigInt(log.topics[3]).toString();
-
-          return {
-            chainId: "137",
-            blockNumber: log.block_number,
-            blockTimestamp: log.block_timestamp,
-            transactionHash: log.transaction_hash,
-            event: "Transfer",
-            tokenId,
-            from,
-            to,
-          } as DecodedEvent;
-        } catch (error) {
-          console.error("Failed to decode Polygon log:", error);
-          return null;
+        if (!polygonResults?.data?.length) {
+          console.warn("No Polygon transfer events returned.");
         }
-      }).filter(Boolean);
 
-      // Combine all events and group by tokenId
-      const allEvents = [...decodedLaosEvents, ...decodedPolygonEvents];
-      const groupedByTokenId: { [tokenId: string]: DecodedEvent[] } = {};
+        // Process LAOS Mint Events (to get the tokenURI)
+        const tokenData: { [tokenId: string]: TokenEntry } = {};
 
-      allEvents.forEach((event) => {
-        if (!groupedByTokenId[event.tokenId]) {
-          groupedByTokenId[event.tokenId] = [];
+        for (const log of laosResults?.data || []) {
+          try {
+            const decoded = laosInterface.parseLog({
+              topics: log.topics,
+              data: log.data,
+            });
+
+            const tokenId = decoded?.args?._tokenId.toString();
+            tokenData[tokenId] = {
+              chainId: "6283",
+              collectionContract: CONTRACT_ADDRESSES["6283"], // Default to LAOS contract
+              tokenId,
+              owner: decoded?.args?._to, // Initial owner
+              tokenURI: decoded?.args?._tokenURI,
+            };
+          } catch (error) {
+            console.error("Failed to decode LAOS log:", error);
+          }
         }
-        groupedByTokenId[event.tokenId].push(event);
-      });
 
-      // Sort events within each tokenId by timestamp
-      Object.values(groupedByTokenId).forEach(events => {
-        events.sort((a, b) => b.blockTimestamp - a.blockTimestamp);
-      });
+        // Process Polygon Transfer Events (to update chain & owner)
+        for (const log of polygonResults?.data || []) {
+          try {
+            const tokenId = BigInt(log.topics[3]).toString();
+            const to = `0x${log.topics[2].slice(-40)}`;
 
-      return {
-        data: {
-          byTokenId: groupedByTokenId
+            if (!tokenData[tokenId]) {
+              // If we haven't seen this token in LAOS, initialize with Polygon contract
+              tokenData[tokenId] = {
+                chainId: "137",
+                collectionContract: CONTRACT_ADDRESSES["137"], // Polygon contract
+                tokenId,
+                owner: to,
+                tokenURI: "", // No tokenURI yet
+              };
+            } else {
+              // Update existing entry to reflect latest transfer
+              tokenData[tokenId].chainId = "137";
+              tokenData[tokenId].collectionContract = CONTRACT_ADDRESSES["137"]; // Update to Polygon contract
+              tokenData[tokenId].owner = to;
+            }
+          } catch (error) {
+            console.error("Failed to decode Polygon log:", error);
+          }
         }
-      };
+
+        // **Filter out tokens without a tokenURI**
+        const filteredTokenEntries = Object.values(tokenData).filter(
+          (token) => token.tokenURI !== "",
+        );
+
+        console.log(
+          `Final token entries count (after filtering): ${filteredTokenEntries.length}`,
+        );
+
+        return {
+          data: {
+            totalCount: filteredTokenEntries.length,
+            tokens: filteredTokenEntries,
+          },
+        };
+      } catch (error) {
+        console.error("Error fetching events:", error);
+        return { error: "Internal server error while fetching blockchain events." };
+      }
     },
   });
 };
