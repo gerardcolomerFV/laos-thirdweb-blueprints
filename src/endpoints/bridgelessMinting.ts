@@ -1,6 +1,7 @@
-import { Access, z } from "../lib/access/index.js";
-import { Source } from "../lib/source/Source.js";
 import { Interface, Log } from "ethers";
+import type { Access } from "../lib/access/index.js";
+import { z } from "../lib/access/index.js";
+import { Source } from "../lib/source/Source.js";
 
 const CONTRACT_ADDRESSES = {
   "6283": "0xfffffffffffffffffffffffe0000000000000119", // LAOS Mainnet address for GoalRev collection
@@ -51,29 +52,6 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
       });
 
       try {
-        let latestBlockWithEvent = { "6283": 0, "137": 0 }; // Track latest blocks where an event occurred
-
-        // Fetch latest indexed block by querying the latest event
-        async function getLatestIndexedBlock(chainId: string) {
-          const latestEvent = await source.events.get(chainId, {
-            orderBy: { field: ["block_number"], direction: "desc" },
-            pagination: { limit: 1 },
-          });
-
-          if (latestEvent?.data?.length) {
-            return latestEvent.data[0].block_number;
-          }
-          return 0;
-        }
-
-        const latestBlockIndexed = {
-          "6283": await getLatestIndexedBlock("6283"),
-          "137": await getLatestIndexedBlock("137"),
-        };
-
-        console.log(`Latest indexed block on LAOS: ${latestBlockIndexed["6283"]}`);
-        console.log(`Latest indexed block on Polygon: ${latestBlockIndexed["137"]}`);
-
         const laosMintEvents = await source.events.get("6283", {
           filters: {
             address: CONTRACT_ADDRESSES["6283"],
@@ -105,21 +83,10 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
         if (!laosResults?.data?.length) console.warn("No LAOS mint events returned.");
         if (!polygonResults?.data?.length) console.warn("No Polygon transfer events returned.");
 
-        // Track the highest block number with an event
-        if (laosResults?.data?.length) {
-          latestBlockWithEvent["6283"] = Math.max(...laosResults.data.map((log) => log.block_number));
-        }
-        if (polygonResults?.data?.length) {
-          latestBlockWithEvent["137"] = Math.max(...polygonResults.data.map((log) => log.block_number));
-        }
-
-        console.log(`Latest block with event on LAOS: ${latestBlockWithEvent["6283"]}`);
-        console.log(`Latest block with event on Polygon: ${latestBlockWithEvent["137"]}`);
-
         // Process LAOS Mint Events (to get the tokenURI)
         const tokenData: { [tokenId: string]: TokenEntry } = {};
 
-        (laosResults?.data || []).forEach((log) => {
+        for (const log of laosResults?.data || []) {
           try {
             const decoded = laosInterface.parseLog({
               topics: log.topics,
@@ -137,10 +104,10 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
           } catch (error) {
             console.error("Failed to decode LAOS log:", error);
           }
-        });
+        }
 
         // Process Polygon Transfer Events (to update chain & owner)
-        (polygonResults?.data || []).forEach((log) => {
+        for (const log of polygonResults?.data || []) {
           try {
             const tokenId = BigInt(log.topics[3]).toString();
             const to = `0x${log.topics[2].slice(-40)}`;
@@ -163,17 +130,17 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
           } catch (error) {
             console.error("Failed to decode Polygon log:", error);
           }
-        });
+        }
 
-        // Convert the final result into an array
-        const tokenEntries = Object.values(tokenData);
+        // Filter out tokens without a tokenURI
+        const filteredTokenEntries = Object.values(tokenData).filter((token) => token.tokenURI !== "");
 
-        console.log(`Final token entries count: ${tokenEntries.length}`);
+        console.log(`Final token entries count (after filtering): ${filteredTokenEntries.length}`);
 
         return {
           data: {
-            totalCount: tokenEntries.length,
-            tokens: tokenEntries,
+            totalCount: filteredTokenEntries.length,
+            tokens: filteredTokenEntries,
           },
         };
       } catch (error) {
