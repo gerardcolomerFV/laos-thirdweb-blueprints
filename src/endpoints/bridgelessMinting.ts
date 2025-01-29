@@ -98,7 +98,7 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
       const [laosResults, polygonResults] = await Promise.all([laosMintEvents, polygonTransferEvents]);
 
       // Decode LAOS events
-      const decodedLaosEvents = (laosResults.data as Log[]).map((log) => {
+      const decodedLaosEvents = (laosResults?.data || []).map((log) => {
         try {
           const decoded = laosInterface.parseLog({
             topics: log.topics,
@@ -110,20 +110,19 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
             blockNumber: log.block_number,
             blockTimestamp: log.block_timestamp,
             transactionHash: log.transaction_hash,
-            event: decoded.name,
-            tokenId: decoded.args._tokenId.toString(),
-            to: decoded.args._to,
-            slot: decoded.args._slot.toString(),
-            tokenURI: decoded.args._tokenURI,
-          } as DecodedEvent;
+            event: decoded?.name,
+            tokenId: decoded?.args?._tokenId.toString(),
+            to: decoded?.args?._to,
+            slot: decoded?.args?._slot.toString(),
+            tokenURI: decoded?.args?._tokenURI,
+          } as unknown as DecodedEvent;
         } catch (error) {
           console.error("Failed to decode LAOS log:", error);
           return null;
         }
       }).filter(Boolean);
 
-      // Decode Polygon events
-      const decodedPolygonEvents = (polygonResults.data as Log[]).map((log) => {
+      const decodedPolygonEvents = (polygonResults?.data || []).map((log) => {
         try {
           const from = `0x${log.topics[1].slice(-40)}`;
           const to = `0x${log.topics[2].slice(-40)}`;
@@ -138,22 +137,25 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
             tokenId,
             from,
             to,
-          } as DecodedEvent;
+          } as unknown as DecodedEvent;
         } catch (error) {
           console.error("Failed to decode Polygon log:", error);
           return null;
         }
       }).filter(Boolean);
 
+
       // Combine all events and group by tokenId
       const allEvents = [...decodedLaosEvents, ...decodedPolygonEvents];
       const groupedByTokenId: { [tokenId: string]: DecodedEvent[] } = {};
 
       allEvents.forEach((event) => {
-        if (!groupedByTokenId[event.tokenId]) {
-          groupedByTokenId[event.tokenId] = [];
+        if (event !== null && event !== undefined) {
+          if (!groupedByTokenId[event.tokenId]) {
+            groupedByTokenId[event.tokenId] = [];
+          }
+          groupedByTokenId[event.tokenId].push(event);
         }
-        groupedByTokenId[event.tokenId].push(event);
       });
 
       // Sort events within each tokenId by timestamp
