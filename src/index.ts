@@ -2,10 +2,10 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import { registerBridgelessMintingEndpoint } from "./endpoints/bridgelessMinting.js";
+import { registerUsdtTransfersEndpoint } from "./endpoints/usdtTransfers.js";
 // Import necessary modules
 import { Access } from "./lib/access/index.js";
-import { registerUsdtTransfersEndpoint } from "./endpoints/usdtTransfers.js";
-import { registerBridgelessMintingEndpoint } from "./endpoints/bridgelessMinting.js";
 
 const access = new Access();
 

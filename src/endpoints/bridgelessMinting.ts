@@ -63,7 +63,8 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
               {
                 operator: "gte",
                 value: Math.floor(
-                  new Date(query.startDate || defaultStartDate).getTime() / 1000,
+                  new Date(query.startDate || defaultStartDate).getTime() /
+                    1000,
                 ),
               },
               {
@@ -87,7 +88,8 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
               {
                 operator: "gte",
                 value: Math.floor(
-                  new Date(query.startDate || defaultStartDate).getTime() / 1000,
+                  new Date(query.startDate || defaultStartDate).getTime() /
+                    1000,
                 ),
               },
               {
@@ -180,7 +182,9 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
         };
       } catch (error) {
         console.error("Error fetching events:", error);
-        return { error: "Internal server error while fetching blockchain events." };
+        return {
+          error: "Internal server error while fetching blockchain events.",
+        };
       }
     },
   });
