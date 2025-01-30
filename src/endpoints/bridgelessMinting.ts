@@ -1,14 +1,13 @@
-import { Interface, Log } from "ethers";
+import { Interface } from "ethers";
 import type { Access } from "../lib/access/index.js";
 import { z } from "../lib/access/index.js";
 import { Source } from "../lib/source/Source.js";
 
 const CONTRACT_ADDRESSES = {
-  "6283": "0xfffffffffffffffffffffffe0000000000000119", // LAOS Mainnet address for GoalRev collection
-  "137": "0x9f16fc5a49afa724407225e97edb8775fe4eb9fb", // Polygon GoalRev production address
+  "6283": "0xfffffffffffffffffffffffe0000000000000119", // LAOS Mainnet GoalRev collection
+  "137": "0x9f16fc5a49afa724407225e97edb8775fe4eb9fb", // Polygon GoalRev production
 };
 
-// ABI definitions
 const polygonABI = [
   "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
 ];
@@ -42,16 +41,9 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
     handler: async ({ query }) => {
       const source = new Source();
       const defaultStartDate = new Date(
-        Date.now() - 130 * 24 * 60 * 60 * 1000,
-      ).toISOString(); // 130 Days ago
+        Date.now() - 130 * 24 * 60 * 60 * 1000
+      ).toISOString();
       const defaultEndDate = new Date().toISOString();
-
-      console.log("Fetching events from Thirdweb...");
-      console.log("Query Parameters:", {
-        startDate: query.startDate || defaultStartDate,
-        endDate: query.endDate || defaultEndDate,
-        limitPerChain: query.limitPerChain,
-      });
 
       try {
         const laosMintEvents = await source.events.get("6283", {
@@ -60,18 +52,8 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
             topic_0:
               "0xa7135052b348b0b4e9943bae82d8ef1c5ac225e594ef4271d12f0744cfc98348",
             block_timestamp: [
-              {
-                operator: "gte",
-                value: Math.floor(
-                  new Date(query.startDate || defaultStartDate).getTime() / 1000,
-                ),
-              },
-              {
-                operator: "lte",
-                value: Math.floor(
-                  new Date(query.endDate || defaultEndDate).getTime() / 1000,
-                ),
-              },
+              { operator: "gte", value: Math.floor(new Date(query.startDate || defaultStartDate).getTime() / 1000) },
+              { operator: "lte", value: Math.floor(new Date(query.endDate || defaultEndDate).getTime() / 1000) },
             ],
           },
           orderBy: { field: ["block_timestamp"], direction: "desc" },
@@ -84,18 +66,8 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
             topic_0:
               "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
             block_timestamp: [
-              {
-                operator: "gte",
-                value: Math.floor(
-                  new Date(query.startDate || defaultStartDate).getTime() / 1000,
-                ),
-              },
-              {
-                operator: "lte",
-                value: Math.floor(
-                  new Date(query.endDate || defaultEndDate).getTime() / 1000,
-                ),
-              },
+              { operator: "gte", value: Math.floor(new Date(query.startDate || defaultStartDate).getTime() / 1000) },
+              { operator: "lte", value: Math.floor(new Date(query.endDate || defaultEndDate).getTime() / 1000) },
             ],
           },
           orderBy: { field: ["block_timestamp"], direction: "desc" },
@@ -107,70 +79,48 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
           polygonTransferEvents,
         ]);
 
-        if (!laosResults?.data?.length) {
-          console.warn("No LAOS mint events returned.");
-        }
-        if (!polygonResults?.data?.length) {
-          console.warn("No Polygon transfer events returned.");
-        }
-
-        // Process LAOS Mint Events (to get the tokenURI)
         const tokenData: { [tokenId: string]: TokenEntry } = {};
 
         for (const log of laosResults?.data || []) {
           try {
-            const decoded = laosInterface.parseLog({
-              topics: log.topics,
-              data: log.data,
-            });
-
+            const decoded = laosInterface.parseLog({ topics: log.topics, data: log.data });
             const tokenId = decoded?.args?._tokenId.toString();
             tokenData[tokenId] = {
               chainId: "6283",
-              collectionContract: CONTRACT_ADDRESSES["6283"], // Default to LAOS contract
+              collectionContract: CONTRACT_ADDRESSES["6283"],
               tokenId,
-              owner: decoded?.args?._to, // Initial owner
+              owner: decoded?.args?._to,
               tokenURI: decoded?.args?._tokenURI,
             };
-          } catch (error) {
-            console.error("Failed to decode LAOS log:", error);
-          }
+          } catch (error) {}
         }
 
-        // Process Polygon Transfer Events (to update chain & owner)
         for (const log of polygonResults?.data || []) {
           try {
             const tokenId = BigInt(log.topics[3]).toString();
             const to = `0x${log.topics[2].slice(-40)}`;
 
             if (!tokenData[tokenId]) {
-              // If we haven't seen this token in LAOS, initialize with Polygon contract
               tokenData[tokenId] = {
                 chainId: "137",
-                collectionContract: CONTRACT_ADDRESSES["137"], // Polygon contract
+                collectionContract: CONTRACT_ADDRESSES["137"],
                 tokenId,
                 owner: to,
-                tokenURI: "", // No tokenURI yet
+                tokenURI: "",
               };
             } else {
-              // Update existing entry to reflect latest transfer
-              tokenData[tokenId].chainId = "137";
-              tokenData[tokenId].collectionContract = CONTRACT_ADDRESSES["137"]; // Update to Polygon contract
-              tokenData[tokenId].owner = to;
+              tokenData[tokenId] = {
+                ...tokenData[tokenId],
+                chainId: "137",
+                collectionContract: CONTRACT_ADDRESSES["137"],
+                owner: to,
+                tokenURI: tokenData[tokenId].tokenURI || "",
+              };
             }
-          } catch (error) {
-            console.error("Failed to decode Polygon log:", error);
-          }
+          } catch (error) {}
         }
 
-        // **Filter out tokens without a tokenURI**
-        const filteredTokenEntries = Object.values(tokenData).filter(
-          (token) => token.tokenURI !== "",
-        );
-
-        console.log(
-          `Final token entries count (after filtering): ${filteredTokenEntries.length}`,
-        );
+        const filteredTokenEntries = Object.values(tokenData).filter((token) => token.tokenURI !== "");
 
         return {
           data: {
@@ -179,7 +129,6 @@ export const registerBridgelessMintingEndpoint = (access: Access) => {
           },
         };
       } catch (error) {
-        console.error("Error fetching events:", error);
         return { error: "Internal server error while fetching blockchain events." };
       }
     },
